@@ -5,6 +5,7 @@
     android:layout_height="match_parent">
 
     <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:id="@+id/rootLayout"
         xmlns:app="http://schemas.android.com/apk/res-auto"
         xmlns:tools="http://schemas.android.com/tools"
         android:layout_width="match_parent"
@@ -92,13 +93,61 @@
             android:layout_marginLeft="16dp"
             android:layout_marginRight="16dp"
             android:layout_marginTop="16dp" />
+<!--             -->
+        <Button
+            android:id="@+id/addNodeMateBtn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="Add Node Mate"
+            app:layout_constraintTop_toBottomOf="@id/imagePreview"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginTop="16dp"/>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/nodeMateContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/addNodeMateBtn"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginTop="8dp">
+
+            <!-- NodeMate Layout will be added dynamically here -->
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <Button
+            android:id="@+id/addChildNodeBtn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="Add Child Node"
+            app:layout_constraintTop_toBottomOf="@id/nodeMateContainer"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginTop="16dp"/>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/childrenNodesContainer"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/addChildNodeBtn"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginTop="8dp">
+
+            <!-- ChildNodes Layout will be added dynamically here -->
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
         <Button
             android:id="@+id/submitFormBtn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Submit Form"
-            app:layout_constraintTop_toBottomOf="@+id/imagePreview"
+            app:layout_constraintTop_toBottomOf="@+id/childrenNodesContainer"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             android:layout_marginLeft="16dp"

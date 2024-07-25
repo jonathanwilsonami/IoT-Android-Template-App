@@ -11,13 +11,16 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.Toast
+import android.view.ViewGroup
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -35,7 +38,8 @@ import java.util.Date
 
 class MainActivity : AppCompatActivity() {
 
-    private val node: SensorNode = SensorNode()
+    private var headNode: SensorNode = SensorNode(nodeType = "head")
+    private var currentNode: SensorNode? = null
     private val bucketName: String = "nodes"
 
     private val nodeRepository = SensorNodeRepository()
@@ -45,41 +49,47 @@ class MainActivity : AppCompatActivity() {
     private var capturedImage: Bitmap? = null
     private lateinit var photoURI: Uri
 
-    private val takePicture =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                try {
-                    val imageBitmap = contentResolver.openInputStream(photoURI)?.use {
-                        BitmapFactory.decodeStream(it)
-                    }
-                    imageBitmap?.let {
-                        capturedImage = it
-                        imgPreview.setImageBitmap(it)
+    private lateinit var nodeMateContainer: ConstraintLayout
+    private lateinit var childrenNodesContainer: ConstraintLayout
+    private val imageViews = mutableListOf<ImageView>()
+    private val photoURIs = mutableListOf<Uri>()
 
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
+    private val takePicture = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val index = imageViews.lastIndex
+            if (index >= 0 && index < photoURIs.size) {
+                val imageBitmap = contentResolver.openInputStream(photoURIs[index])?.use {
+                    BitmapFactory.decodeStream(it)
+                }
+                imageBitmap?.let {
+                    imageViews[index].setImageBitmap(it)
+                    capturedImage = it
+
+                    // Upload image to storage
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            currentNode?.let { node ->
                                 objectStorageClient.uploadImage(bucketName, node, "png", bitmapToByteArray(it))
-                                withContext(Dispatchers.Main) {
-                                    Log.d(TAG, "Image uploaded successfully")
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    Log.e(TAG, "Error uploading image: ${e.message}")
-                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                Log.d(TAG, "Image uploaded successfully")
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Log.e(TAG, "Error uploading image: ${e.message}")
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error decoding image: ${e.message}")
-                    Toast.makeText(this, "Error decoding image", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                Toast.makeText(this, "Image capture failed", Toast.LENGTH_SHORT).show()
+                Log.e(TAG, "Index $index is out of bounds for imageViews or photoURIs list")
             }
+        } else {
+            Toast.makeText(this, "Image capture failed", Toast.LENGTH_SHORT).show()
         }
+    }
 
     companion object {
-        private const val REQUEST_IMAGE_CAPTURE = 1
         private const val TAG = "MainActivity"
         private const val REQUEST_CAMERA_PERMISSION = 100
         private val CAMERA_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
@@ -111,16 +121,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupUI() {
         // Configs for the ObjectStorageClient
-        val minio_provider_config = mapOf(
+        val minioProviderConfig = mapOf(
             "provider" to "minio",
             "endpoint" to "http://10.0.2.2:9000",
             "username" to "minioadmin",
-            "password" to "minioadmin",
+            "password" to "minioadmin"
         )
 
         objectStorageClient = ObjectStorageClientFactory.createClient(
-            minio_provider_config["provider"] ?: throw IllegalArgumentException("Missing provider"),
-            minio_provider_config
+            minioProviderConfig["provider"] ?: throw IllegalArgumentException("Missing provider"),
+            minioProviderConfig
         )
 
         val nodeNameInputField: EditText = findViewById(R.id.nodeNameInputField)
@@ -129,21 +139,147 @@ class MainActivity : AppCompatActivity() {
         imgPreview = findViewById(R.id.imagePreview)
         val submitBtn: Button = findViewById(R.id.submitFormBtn)
 
+        nodeMateContainer = findViewById(R.id.nodeMateContainer)
+        childrenNodesContainer = findViewById(R.id.childrenNodesContainer)
+
         takeImageBtn.setOnClickListener {
             Log.d(TAG, "Take image button clicked")
-            dispatchTakePictureIntent(takePicture)
+            headNode.nodeName = nodeNameInputField.text.toString()
+            imageViews.add(imgPreview)
+            dispatchTakePictureIntent(headNode)
         }
 
         submitBtn.setOnClickListener {
-            node.nodeName = nodeNameInputField.text.toString()
-            node.nodeType = nodeTypeField.text.toString()
 
-            val nodeJsonString = Json.encodeToString(node)
+            val nodeJsonString = Json.encodeToString(headNode)
             println(nodeJsonString)
 
-            saveNode(bucketName, node)
+            saveNode(bucketName, headNode)
 
-            lifecycleScope.launch { nodeRepository.sendNodeData(node) }
+            lifecycleScope.launch { nodeRepository.sendNodeData(headNode) }
+
+            // Call the function to reset the input fields and views
+            resetInputFieldsAfterSubmit()
+        }
+
+        findViewById<Button>(R.id.addNodeMateBtn).setOnClickListener {
+            addNodeMate()
+        }
+
+        findViewById<Button>(R.id.addChildNodeBtn).setOnClickListener {
+            addChildNode()
+        }
+    }
+
+    private fun addNodeMate() {
+        Log.d(TAG, "Adding node mate")
+        nodeMateContainer.visibility = View.VISIBLE
+        val nodeMateView = layoutInflater.inflate(R.layout.node_input, nodeMateContainer, false)
+        nodeMateContainer.addView(nodeMateView)
+        Log.d(TAG, "Node mate added")
+        setupDynamicNode(nodeMateView, nodeRelation = "mate")
+    }
+
+    private fun addChildNode() {
+        Log.d(TAG, "Adding child node")
+        childrenNodesContainer.visibility = View.VISIBLE
+        val childNodeView = layoutInflater.inflate(R.layout.node_input, childrenNodesContainer, false)
+        childrenNodesContainer.addView(childNodeView)
+        Log.d(TAG, "Child node added")
+        setupDynamicNode(childNodeView, nodeRelation = "child")
+    }
+
+    private fun setupDynamicNode(view: View, nodeRelation: String) {
+        Log.d(TAG, "Setting up dynamic node")
+        val takeImageDynamicBtn: Button = view.findViewById(R.id.takeImageDynamicBtn)
+        val imageDynamicPreview: ImageView = view.findViewById(R.id.imageDynamicPreview)
+        val nodeNameDynamicInputField: EditText = findViewById(R.id.nodeNameDynamicInputField)
+        val nodeTypeDynamicInputField: EditText = findViewById(R.id.nodeTypeDynamicInputField)
+
+        Log.d(TAG, "Button and ImageView found")
+
+        takeImageDynamicBtn.setOnClickListener {
+            val node = SensorNode().apply {
+                nodeName = nodeNameDynamicInputField.text.toString()
+            }
+
+            imageViews.add(imageDynamicPreview)
+            Log.d(TAG, "Take image button clicked")
+            dispatchTakePictureIntent(node)
+
+            // Ensure connectedNodes and childrenNodes are initialized
+            if (headNode.connectedNodes == null) {
+                headNode.connectedNodes = ConnectedNodes() // Initialize connectedNodes if null
+            }
+
+            if (nodeRelation == "child") {
+                // Add the node to childrenNodes
+                node.nodeType = nodeRelation
+                if (headNode.connectedNodes?.childrenNodes == null) {
+                    headNode.connectedNodes?.childrenNodes = mutableListOf()
+                }
+                // Add the node to childrenNodes
+                headNode.connectedNodes?.childrenNodes?.add(node)
+            } else {
+                if (nodeRelation == "mate") {
+                    // Add the node to nodeMate
+                    node.nodeType = nodeRelation
+                    headNode.connectedNodes?.nodeMate = node
+                }
+            }
+            // Reset the dynamic inputs after handling the image
+            resetDynamicInputFields(view)
+        }
+    }
+
+    private fun dispatchTakePictureIntent(node: SensorNode) {
+        currentNode = node
+        val takePictureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+
+        if (!hasCameraFeature()) {
+            Toast.makeText(this, "No camera feature available", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (!hasCameraPermission()) {
+            ActivityCompat.requestPermissions(this, CAMERA_PERMISSIONS, REQUEST_CAMERA_PERMISSION)
+            return
+        }
+
+        val photoFile: File? = try {
+            createImageFile()
+        } catch (ex: IOException) {
+            Log.e(TAG, "Error creating file: ${ex.message}")
+            null
+        }
+
+        photoFile?.also {
+            photoURI = FileProvider.getUriForFile(
+                this,
+                "com.example.iotandroidtemplateapp.fileprovider",
+                it
+            )
+            takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI)
+            photoURIs.add(photoURI)
+            takePicture.launch(takePictureIntent)
+
+        }
+    }
+
+    private fun createImageFile(): File? {
+        val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
+        val storageDir: File? = getExternalFilesDir("Android/data/com.example.iotandroidtemplateapp/files/")
+        return try {
+            File.createTempFile(
+                "PNG_${timeStamp}_",
+                ".png",
+                storageDir
+            ).apply {
+                deleteOnExit()
+            }
+        } catch (ex: IOException) {
+            Log.e(TAG, "Error creating file: ${ex.message}")
+            null
         }
     }
 
@@ -173,67 +309,53 @@ class MainActivity : AppCompatActivity() {
         return packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
     }
 
-    private fun dispatchTakePictureIntent(takePicture: ActivityResultLauncher<Intent>) {
-        val takePictureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        Log.d(TAG, "Starting camera intent")
+    private fun resetInputFieldsAfterSubmit() {
+        val nodeNameInputField: EditText? = findViewById(R.id.nodeNameInputField)
+        val nodeTypeField: EditText? = findViewById(R.id.nodeTypeInputField)
+        val nodeNameDynamicInputField: EditText? = findViewById(R.id.nodeNameDynamicInputField)
+        val nodeTypeDynamicInputField: EditText? = findViewById(R.id.nodeTypeDynamicInputField)
 
-        if (!hasCameraFeature()) {
-            Log.e(TAG, "No camera feature available")
-            Toast.makeText(this, "No camera feature available", Toast.LENGTH_SHORT).show()
-            return
+        // Clear the text fields if they are not null
+        nodeNameInputField?.text?.clear()
+        nodeTypeField?.text?.clear()
+        nodeNameDynamicInputField?.text?.clear()
+        nodeTypeDynamicInputField?.text?.clear()
+
+        // Reset the ImageView if not null
+        imgPreview.setImageDrawable(null)
+        for (imageView in imageViews) {
+            imageView.setImageDrawable(null)
         }
 
-        if (!hasCameraPermission()) {
-            ActivityCompat.requestPermissions(this, CAMERA_PERMISSIONS, REQUEST_CAMERA_PERMISSION)
-            return
-        }
+        // Clear the list of ImageViews and URIs
+        imageViews.clear()
+        photoURIs.clear()
 
-        val resolveInfo = packageManager.queryIntentActivities(takePictureIntent, PackageManager.MATCH_DEFAULT_ONLY)
-        if (resolveInfo == null) {
-            Log.e(TAG, "No camera app available")
-            Toast.makeText(this, "No camera app available", Toast.LENGTH_SHORT).show()
-            return
-        } else {
-            Log.d(TAG, "Camera app available")
+        // Reset the currentNode and capturedImage
+        currentNode = null
+        capturedImage = null
 
-            val photoFile: File? = try {
-                createImageFile()
-            } catch (ex: IOException) {
-                Log.e(TAG, "Error creating file: ${ex.message}")
-                null
-            }
+        // Hide dynamic node views if needed
+        nodeMateContainer.visibility = View.GONE
+        childrenNodesContainer.visibility = View.GONE
 
-            photoFile?.also {
-                Log.d(TAG, "Photo file path: ${it.absolutePath}")
-                photoURI = FileProvider.getUriForFile(
-                    this,
-                    "com.example.iotandroidtemplateapp.fileprovider",
-                    it
-                )
-                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI)
-                takePicture.launch(takePictureIntent)
-            }
-        }
+        // reset the headNode
+        headNode = SensorNode(nodeType = "head")
     }
 
-    private fun createImageFile(): File? {
-        val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-        val storageDir: File? = getExternalFilesDir("Android/data/com.example.iotandroidtemplateapp/files/")
-        return try {
-            val file = File.createTempFile(
-                "PNG_${timeStamp}_",
-                ".png",
-                storageDir
-            ).apply {
-                deleteOnExit()
-            }
-            Log.d(TAG, "File created successfully: ${file.absolutePath}")
-            file
-        } catch (ex: IOException) {
-            Log.e(TAG, "Error creating file: ${ex.message}")
-            null
-        }
-    }
+    private fun resetDynamicInputFields(view: View) {
+        // Reset the dynamic node input fields
+        val nodeNameDynamicInputField: EditText? = view.findViewById(R.id.nodeNameDynamicInputField)
+        val nodeTypeDynamicInputField: EditText? = view.findViewById(R.id.nodeTypeDynamicInputField)
+        val imageDynamicPreview: ImageView? = view.findViewById(R.id.imageDynamicPreview)
 
+        // Clear the text fields and reset ImageView if not null
+        nodeNameDynamicInputField?.text?.clear()
+        nodeTypeDynamicInputField?.text?.clear()
+        imageDynamicPreview?.setImageDrawable(null)
+
+        // Remove the dynamic view if needed
+        (view.parent as? ViewGroup)?.removeView(view)
+    }
 
 }

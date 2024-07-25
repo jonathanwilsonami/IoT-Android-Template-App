@@ -68,7 +68,7 @@ class MinioStorageClient(
                 minioClient.makeBucket(bucketArgs)
                 println("Created bucket: $bucketName")
             }
-
+            node.updateUUID()
             val inputStream: InputStream = ByteArrayInputStream(byteArray)
             minioClient.putObject(
                 PutObjectArgs.builder()
@@ -78,6 +78,7 @@ class MinioStorageClient(
                     .contentType("image/png")
                     .build()
             )
+            node.nodeImageUri = "http://localhost:9000/$bucketName/minio-data/images/${node.uuid}.${imageType}"
         } catch (e: Exception) {
             println("Error uploading image: ${e.message}")
         }
